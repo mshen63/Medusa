@@ -3,6 +3,7 @@ import sys
 import time
 import numpy as np
 import math
+import threading
 
 from rtpmidi import RtpMidi
 from pymidi import server
@@ -10,48 +11,22 @@ from queue import Queue
 from threading import Thread
 from xarm.wrapper import XArmAPI
 
+from pythonosc import udp_client
+from pythonosc import dispatcher
+from pythonosc import osc_server
 
-class MyHandler(server.Handler):
+def sendCommands():
+    global client
+    client = udp_client.SimpleUDPClient(IP, PORT_TO_MAX)
+    for i in range(5):
+        client.send_message("/point", i)
+    time.sleep(5)
+    for i in range(5):
+        client.send_message("/point", i)
 
-    def on_peer_connected(self, peer):
-        # Handler for peer connected
-        print('Peer connected: {}'.format(peer))
-
-    def on_peer_disconnected(self, peer):
-        # Handler for peer disconnected
-        print('Peer disconnected: {}'.format(peer))
-
-    def on_midi_commands(self, peer, command_list):
-        # Handler for midi msgs
-        for command in command_list:
-            chn = command.channel
-            if chn == 1:  # this means its channel 2!!!!!
-                if command.command == 'note_on':
-                    print("YEYE START")
-
-
-            if chn == 13:  # this means its channel 14!!!!!
-                if command.command == 'note_on':
-                    print(chn)
-                    key = command.params.key.__int__()
-                    velocity = command.params.velocity
-                    rob = np.where(notes == key)[0]
-                    if len(rob) > 0:
-                        print(int(rob))
-                        qList[int(rob)].put(1)
-            if chn == 12:  # this means its channel 13!!!!!
-                if command.command == 'note_on':
-                    # print(chn)
-                    key = command.params.key.__int__()
-                    velocity = command.params.velocity
-                    for q in qList:
-                        q.put(2)
-                    # print('key {} with velocity {}'.format(key, velocity))
-                    # q.put(velocity)
-
-
-                    #playDance(dances[velocity])
-
+def onPoint(robot):
+    qList[robot] = not qList[robot]
+    print(robot, qList[robot])
 
 def setup():
     for a in range(len(arms)):
@@ -124,24 +99,18 @@ def prepGesture(numarm, traj):
 
 
 
-def strummer(inq,num):
+def strummer(armNum):
+    # melody here in the future
+    return
     i = 0
     uptraj = fifth_poly(-strumD/2, strumD/2, speed)
     downtraj = fifth_poly(strumD/2, -strumD/2, speed)
     both = [uptraj, downtraj]
-    tension = fifth_poly(0, -20, 0.5)
-    release = fifth_poly(-20, 0, 0.75)
-    while True:
-        play = inq.get()
-        print("got!")
-        if play == 1:
-            direction = i % 2
-            strumbot(num, both[direction])
-            i += 1
-        elif play == 2:
-            prepGesture(num, tension)
-            time.sleep(0.25)
-            prepGesture(num, release)
+
+    while qList[armNum]:
+        direction = i % 2
+        strumbot(armNum, both[direction])
+        i += 1
 
 
 # Press the green button in the gutter to run the script.
@@ -153,9 +122,14 @@ if __name__ == '__main__':
     global strumD
     global speed
     global notes
+    global PORT_FROM_MAX
+    global PORT_TO_MAX
 
     strumD = 30
     speed = 0.25
+    PORT_FROM_MAX = 5001
+    PORT_TO_MAX = 5002
+
     IP0 = [-1, 87.1, -2, 126.5, -strumD/2, 51.7, -45]
     IP1 = [2.1, 86.3, 0, 127.1, -strumD/2, 50.1, -45]
     IP2 = [1.5, 81.6, 0.0, 120, -strumD/2, 54.2, -45]
@@ -182,18 +156,14 @@ if __name__ == '__main__':
         a.set_mode(1)
         a.set_state(0)
 
-    q0 = Queue()
-    q1 = Queue()
-    q2 = Queue()
-    q3 = Queue()
-    q4 = Queue()
-    qList = [q0, q1, q2, q3, q4]
+    NUM_ARMS = 5
+    qList = [False]*NUM_ARMS
 
-    xArm0 = Thread(target=strummer, args=(q0, 0,))
-    xArm1 = Thread(target=strummer, args=(q1, 1,))
-    xArm2 = Thread(target=strummer, args=(q2, 2,))
-    xArm3 = Thread(target=strummer, args=(q3, 3,))
-    xArm4 = Thread(target=strummer, args=(q4, 4,))
+    xArm0 = Thread(target=strummer, args=(0,))
+    xArm1 = Thread(target=strummer, args=(1,))
+    xArm2 = Thread(target=strummer, args=(2,))
+    xArm3 = Thread(target=strummer, args=(3,))
+    xArm4 = Thread(target=strummer, args=(4,))
 
     xArm0.start()
     xArm1.start()
@@ -206,10 +176,17 @@ if __name__ == '__main__':
     # time.sleep(5)
     # q1.put(2)
     # input()
+    
+    dispatcher = dispatcher.Dispatcher()
+    dispatcher.map("/point", onPoint)
+    def server():
+        server = osc_server.ThreadingOSCUDPServer((IP, PORT_FROM_MAX), dispatcher)
+        print("Serving on {}".format(server.server_address))
+        server.serve_forever()
 
-    rtp_midi = RtpMidi(ROBOT, MyHandler(), PORT)
-    print("test")
-    rtp_midi.run()
+    threading.Thread(target=server, daemon=True).start()
+    
+    
 
     # while True:
     #     strumnum = input("which robot")
